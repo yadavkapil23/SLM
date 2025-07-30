@@ -15,18 +15,39 @@ class TinyTransformer(tf.keras.Model):
         self.output_layer = tf.keras.layers.Dense(vocab_size)
 
     def positional_encoding(self, position, d_model):
-        angle_rads = self.get_angles(tf.range(position, dtype=tf.float32)[:, tf.newaxis],
-                                   tf.range(d_model, dtype=tf.float32)[tf.newaxis, :],
-                                   d_model)
+        angle_rads = self.get_angles(
+            tf.range(position, dtype=tf.float32)[:, tf.newaxis],
+            tf.range(d_model, dtype=tf.float32)[tf.newaxis, :],
+            d_model
+        )
         
-        # apply sin to even indices in the array; 2i
-        angle_rads[:, 0::2] = tf.sin(angle_rads[:, 0::2])
+        # Apply sin to even indices; cos to odd indices
+        sin_part = tf.sin(angle_rads[:, 0::2])
+        cos_part = tf.cos(angle_rads[:, 1::2])
         
-        # apply cos to odd indices in the array; 2i+1
-        angle_rads[:, 1::2] = tf.cos(angle_rads[:, 1::2])
+        # Create the full positional encoding by interleaving sin and cos
+        pos_encoding = tf.zeros((position, d_model), dtype=tf.float32)
         
-        pos_encoding = angle_rads[tf.newaxis, ...]
+        # Use scatter_nd to place sin values at even indices
+        even_indices = tf.stack([
+            tf.repeat(tf.range(position), d_model//2),
+            tf.tile(tf.range(0, d_model, 2), [position])
+        ], axis=1)
         
+        # Use scatter_nd to place cos values at odd indices  
+        odd_indices = tf.stack([
+            tf.repeat(tf.range(position), d_model//2),
+            tf.tile(tf.range(1, d_model, 2), [position])
+        ], axis=1)
+        
+        pos_encoding = tf.tensor_scatter_nd_update(
+            pos_encoding, even_indices, tf.reshape(sin_part, [-1])
+        )
+        pos_encoding = tf.tensor_scatter_nd_update(
+            pos_encoding, odd_indices, tf.reshape(cos_part, [-1])
+        )
+        
+        pos_encoding = pos_encoding[tf.newaxis, ...]
         return tf.cast(pos_encoding, dtype=tf.float32)
 
     def get_angles(self, pos, i, d_model):

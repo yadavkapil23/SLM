@@ -13,7 +13,7 @@ def load_dataset(tfrecord_path, seq_len=128, batch_size=32, validation_split=0.1
     dataset = tf.data.TFRecordDataset(tfrecord_path)
     dataset = dataset.map(lambda x: parse_tfrecord(x, seq_len))
     dataset = dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-    
+     
     # Split into train and validation
     total_size = sum(1 for _ in tf.data.TFRecordDataset(tfrecord_path))
     train_size = int(total_size * (1 - validation_split))
