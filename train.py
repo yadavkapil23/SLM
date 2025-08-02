@@ -10,16 +10,23 @@ def parse_tfrecord(example_proto, seq_len):
     return parsed["input_ids"], parsed["labels"]
 
 def load_dataset(tfrecord_path, seq_len=128, batch_size=32, validation_split=0.1):
+    # Load the dataset
     dataset = tf.data.TFRecordDataset(tfrecord_path)
     dataset = dataset.map(lambda x: parse_tfrecord(x, seq_len))
-    dataset = dataset.shuffle(1000).batch(batch_size).prefetch(tf.data.AUTOTUNE)
-     
-    # Split into train and validation
-    total_size = sum(1 for _ in tf.data.TFRecordDataset(tfrecord_path))
-    train_size = int(total_size * (1 - validation_split))
+    dataset = dataset.shuffle(1000)
     
+    # Use a more efficient approach for splitting
+    # Calculate approximate split based on file size or use a fixed split
+    dataset_size = 29909128  # Known size from the README
+    train_size = int(dataset_size * (1 - validation_split))
+    
+    # Split the dataset
     train_dataset = dataset.take(train_size)
     val_dataset = dataset.skip(train_size)
+    
+    # Apply batching and prefetching
+    train_dataset = train_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    val_dataset = val_dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
     
     return train_dataset, val_dataset
 
@@ -46,12 +53,13 @@ def train():
         tf.keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True),
         tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2)
     ]
-    
+    print("Training model...")
     model.fit(
         train_dataset, 
         validation_data=val_dataset,
         epochs=epochs,
-        callbacks=callbacks
+        callbacks=callbacks,
+        verbose=1
     )
     model.save("trained_slm_model")
 
