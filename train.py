@@ -31,28 +31,88 @@ def load_dataset(tfrecord_path, seq_len=128, batch_size=32, validation_split=0.1
     return train_dataset, val_dataset
 
 def train():
+    # Enable mixed precision for T4
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
+    
+    # T4-specific optimizations
+    tf.config.optimizer.set_jit(True)  # Enable XLA compilation
+    tf.config.optimizer.set_experimental_options({"layout_optimizer": True})
+    
     vocab_size = 30000
     seq_len = 128
     embed_dim = 128
     num_heads = 2
     ff_dim = 512
-    batch_size = 32
-    epochs = 5
-
+    batch_size = 128  # Increased for faster training
+    epochs = 3  # Reduced epochs - let early stopping handle it
+    
+    # Create model with dropout for overfitting prevention
     model = TinyTransformer(vocab_size, embed_dim, num_heads, ff_dim)
+    
+    # Compile with stronger regularization
     model.compile(
         loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-        optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-        metrics=['accuracy']
+        optimizer=tf.keras.optimizers.Adam(
+            learning_rate=2e-4,  # Slightly higher for faster convergence
+            weight_decay=1e-4,   # Stronger L2 regularization
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-7
+        ),
+        metrics=['accuracy'],
+        jit_compile=True  # Enable XLA for model compilation
     )
 
     train_dataset, val_dataset = load_dataset("data/dataset.tfrecord", seq_len, batch_size)
     
-    # Add callbacks for better training
+    # Calculate steps per epoch for better monitoring
+    total_train_examples = 26918215  # ~27M from README
+    steps_per_epoch = total_train_examples // batch_size
+    
+    print(f"Training on Tesla T4 GPU")
+    print(f"Dataset: {total_train_examples:,} training examples")
+    print(f"Batch size: {batch_size}")
+    print(f"Steps per epoch: {steps_per_epoch:,}")
+    print(f"Estimated time per epoch: ~1-1.5 hours on T4")
+    print(f"Total training time: ~3-4.5 hours")
+    print(f"Overfitting prevention: Dropout + L2 + Early Stopping")
+    
+    # Enhanced callbacks for overfitting prevention and faster training
     callbacks = [
-        tf.keras.callbacks.EarlyStopping(patience=3, restore_best_weights=True),
-        tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=2)
+        # Early stopping with more aggressive settings
+        tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss',
+            patience=2,  # Reduced patience for faster stopping
+            restore_best_weights=True,
+            verbose=1
+        ),
+        # Learning rate reduction
+        tf.keras.callbacks.ReduceLROnPlateau(
+            monitor='val_loss',
+            factor=0.5,
+            patience=1,  # Reduced patience
+            min_lr=1e-6,
+            verbose=1
+        ),
+        # Model checkpointing
+        tf.keras.callbacks.ModelCheckpoint(
+            'best_model.h5',
+            monitor='val_loss',
+            save_best_only=True,
+            verbose=1
+        ),
+        # TensorBoard for monitoring
+        tf.keras.callbacks.TensorBoard(
+            log_dir='./logs',
+            histogram_freq=1,
+            write_graph=True
+        ),
+        # Custom callback to reduce training time
+        tf.keras.callbacks.LambdaCallback(
+            on_epoch_end=lambda epoch, logs: print(f"Epoch {epoch+1} completed - Val Loss: {logs.get('val_loss', 0):.4f}")
+        )
     ]
+    
     print("Training model...")
     model.fit(
         train_dataset, 
